@@ -193,7 +193,6 @@ Everything here runs on the player's machine, so treat it as raising effort, not
 ```
 CodeProtection/
   CodeProtection.asmdef             runtime assembly definition
-  LICENSE
   CodeGen/
     XorKeystream.cs                 keystream (mirror of the C++ side)
     ProtectionAttributes.cs         [Protect] / [DoNotProtect]
