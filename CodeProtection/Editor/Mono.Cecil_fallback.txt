@@ -1,0 +1,61 @@
+About the compile time obfuscator (Unity.CodeProtection.CodeGen)
+===============================================================
+
+Add Random Code and String Obfuscation run at compile time inside the
+assembly Unity.CodeProtection.CodeGen (folder: CodeProtection/ILPostProcessor).
+It works for both Mono and IL2CPP builds. This Editor assembly no longer uses
+Cecil at all.
+
+The one rule that makes it work
+-------------------------------
+
+Unity only treats an assembly as a code generation assembly (an
+ILPostProcessor host) when its assembly name BOTH:
+
+    * starts with "Unity."   and
+    * ends with ".CodeGen"
+
+That is why the assembly is named "Unity.CodeProtection.CodeGen". When the name
+qualifies, Unity automatically supplies Unity.CompilationPipeline.Common
+(which provides ILPostProcessor, ICompiledAssembly, ILPostProcessResult) AND
+Cecil to the assembly. Neither appears in the assembly reference pickers,
+because you never add them by hand; the name is what pulls them in.
+
+The name supplies the pipeline assembly automatically. Cecil is NOT auto
+supplied in this context, so the four Mono.Cecil DLLs are referenced explicitly
+(they come from the com.unity.nuget.mono-cecil package, which this project has):
+
+    name:                 Unity.CodeProtection.CodeGen   (do not change this)
+    Platform:             Editor only   (MUST be Editor, not Any Platform)
+    Override References:   ON
+    Auto Referenced:       OFF
+    No Engine References:  ON
+    Assembly References:   Mono.Cecil.dll
+                           Mono.Cecil.Mdb.dll
+                           Mono.Cecil.Pdb.dll
+                           Mono.Cecil.Rocks.dll
+
+Platform MUST be Editor only. If it is Any Platform, a player build tries to
+compile this assembly for the player target, where the editor only Mono.Cecil
+package is absent, and Cecil types fail with "Cecil does not exist in Mono".
+The processor still runs during player builds; Editor only just stops it from
+being compiled into the game.
+
+If you see "Mono.Cecil could not be found": install "com.unity.nuget.mono-cecil"
+from Window > Package Manager, then those four appear in the dropdown.
+
+If you see "ILPostProcessor / ICompiledAssembly / Unity could not be found"
+--------------------------------------------------------------------------
+
+The assembly name lost its "Unity." prefix or its ".CodeGen" suffix. Open the
+asmdef in the Inspector and make sure the Name field is exactly
+"Unity.CodeProtection.CodeGen", then Apply and let it recompile. The .cs file
+namespace does not matter; only the assembly name field does.
+
+Kill switch
+-----------
+
+If you cannot get it to compile and want to move on, delete the whole
+CodeProtection/ILPostProcessor folder. The rest of the asset keeps working;
+you only lose the compile time route for Add Random Code and String
+Obfuscation. The Code Integrity Check and metadata encryption are unaffected.
