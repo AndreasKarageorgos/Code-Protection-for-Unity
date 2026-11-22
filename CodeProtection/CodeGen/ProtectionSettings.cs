@@ -3,7 +3,7 @@ using UnityEngine;
 
 namespace CodeProtection
 {
-
+    
     /// Single source of truth for the panel toggles. Stored as an asset so the
     /// choices survive domain reloads and travel with the project.
     ///
@@ -43,6 +43,15 @@ namespace CodeProtection
                  "Very short strings add noise for little gain.")]
         [Range(1, 32)] public int minStringLength = 2;
 
+        [Header("AI Confusion")]
+        [Tooltip("Generate realistically named but inert decoy classes and methods " +
+                 "so an AI reading the decompiled code draws confident wrong conclusions.")]
+        public bool aiConfusion = false;
+        [Tooltip("How many decoy classes to generate (e.g. fake license, save, network systems).")]
+        [Range(0, 16)] public int decoyClasses = 2;
+        [Tooltip("How many decoy methods to put in each decoy class.")]
+        [Range(1, 32)] public int decoyMethodsPerClass = 6;
+
         [Header("Code Integrity Check (Standalone only)")]
         public bool codeIntegrityCheck = false;
         [Tooltip("Secret used to sign the integrity manifest. Pressing Save writes " +
@@ -63,11 +72,11 @@ namespace CodeProtection
         [HideInInspector] public int markerSalt = 0;
         [HideInInspector] public string manifestFile = "integrity.manifest.json";
 
-
+        
         /// Set by ProtectionSettingsEditor once the asset is loaded in the editor.
         /// Runtime code never needs the settings object, so this stays null in a
         /// player build.
-  
+    
         public static ProtectionSettings Instance { get; set; }
 
         public List<string> ExcludedNamespaceList()

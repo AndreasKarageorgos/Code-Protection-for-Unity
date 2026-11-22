@@ -4,14 +4,14 @@ using UnityEngine;
 
 namespace CodeProtection.Editor
 {
-
+    
     /// Control panel for the asset. Collapsible sections, each with an ON or OFF
     /// toggle and an info blurb. Window menu: Tools > Code Protection.
-  
+    
     public sealed class ProtectionPanel : EditorWindow
     {
         Vector2 _scroll;
-        bool _secMeta = true, _secRandom = true, _secStrings = true, _secIntegrity = true;
+        bool _secMeta = true, _secRandom = true, _secStrings = true, _secAi = true, _secIntegrity = true;
 
         static readonly Color Header   = new Color(0.60f, 0.52f, 0.12f);
         static readonly Color Info     = new Color(0.30f, 0.30f, 0.33f);
@@ -82,6 +82,27 @@ namespace CodeProtection.Editor
                     s.minStringLength = EditorGUILayout.IntSlider("Min string length", s.minStringLength, 1, 32);
                     Blurb("Put [DoNotProtect] on code that compares strings by reference or relies on " +
                           "interning. Value comparisons and reflection by name are unaffected.");
+                }
+                EditorGUILayout.Space(4);
+            }
+
+            // --- AI Confusion ---
+            _secAi = Section("AI Confusion",
+                "Plant misleading decoys to derail AI assisted reverse engineering.",
+                _secAi, ref s.aiConfusion);
+            if (_secAi)
+            {
+                Blurb("Generates realistically named decoy classes and methods (fake license, save, and " +
+                      "network systems) whose bodies look plausible but never run. An AI summarizing your " +
+                      "decompiled code latches onto the convincing false leads and reports confident wrong " +
+                      "conclusions. Nothing real is renamed and nothing extra executes.");
+                using (new EditorGUI.DisabledScope(!s.aiConfusion))
+                {
+                    s.decoyClasses = EditorGUILayout.IntSlider("Decoy classes", s.decoyClasses, 0, 16);
+                    s.decoyMethodsPerClass = EditorGUILayout.IntSlider("Decoy methods / class", s.decoyMethodsPerClass, 1, 32);
+                    Blurb("Decoys are anchored to the classes picked by [Protect] or Force so IL2CPP keeps " +
+                          "them. For an IL2CPP build, turn on Force (or tag a class) so the decoys survive " +
+                          "stripping. On Mono they always appear.");
                 }
                 EditorGUILayout.Space(4);
             }

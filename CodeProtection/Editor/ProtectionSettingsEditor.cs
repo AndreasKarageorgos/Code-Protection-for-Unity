@@ -7,13 +7,13 @@ using UnityEngine;
 
 namespace CodeProtection.Editor
 {
-
+    
     /// Editor side owner of the settings asset. Keeps all UnityEditor calls out of
     /// the runtime ProtectionSettings type, finds the package wherever it was
     /// dropped, generates strong secrets and randomized markers so nothing ships
     /// with guessable or greppable names, writes the baked integrity secret, and
     /// writes the plain config file the compile time ILPostProcessor reads.
-
+    /// 
     public static class ProtectionSettingsEditor
     {
         const string ConfigRelPath = "ProjectSettings/CodeProtection.cfg";
@@ -79,11 +79,11 @@ namespace CodeProtection.Editor
                 || value == "change-me-integrity";
         }
 
-
+        
         /// Rewrites IntegritySecret.generated.cs with the passphrase stored as a
         /// masked byte array, plus the randomized manifest filename, so neither the
         /// secret nor the manifest name is a plain, greppable constant.
-        
+        /// 
         public static void WriteIntegritySecret(ProtectionSettings s)
         {
             byte[] utf8 = Encoding.UTF8.GetBytes(s.integrityPassphrase ?? "");
@@ -136,7 +136,7 @@ namespace CodeProtection.Editor
         
         /// Writes the plain key=value config the compile time ILPostProcessor reads.
         /// It lives under ProjectSettings so it is not imported as an asset.
-        
+        /// 
         public static void WriteConfig(ProtectionSettings s)
         {
             EnsureMarkers(s);
@@ -154,6 +154,9 @@ namespace CodeProtection.Editor
             sb.Append("fieldPrefix=").Append(s.fieldPrefix).Append('\n');
             sb.Append("methodPrefix=").Append(s.methodPrefix).Append('\n');
             sb.Append("salt=").Append(s.markerSalt).Append('\n');
+            sb.Append("aiConfusion=").Append(s.aiConfusion ? '1' : '0').Append('\n');
+            sb.Append("decoyClasses=").Append(s.decoyClasses).Append('\n');
+            sb.Append("decoyMethodsPerClass=").Append(s.decoyMethodsPerClass).Append('\n');
 
             string projectRoot = Directory.GetParent(Application.dataPath).FullName;
             string full = Path.Combine(projectRoot, ConfigRelPath.Replace('/', Path.DirectorySeparatorChar));

@@ -4,8 +4,9 @@ A small, open toolkit that reproduces four features from paid Unity obfuscators,
 
 1. **String Obfuscation** encrypts the string literals in your compiled code so decompilers no longer show them in plain text.
 2. **Add Random Code** injects behaviour neutral junk code into your classes to slow down decompilers.
-3. **Code Integrity Check** hashes critical files at build time and closes the app if they are modified.
-4. **Encrypt global-metadata.dat** scrambles the IL2CPP metadata file on disk and decrypts it at runtime.
+3. **AI Confusion** plants realistically named but inert decoy classes and methods so AI assisted reverse engineering reaches confident wrong conclusions.
+4. **Code Integrity Check** hashes critical files at build time and closes the app if they are modified.
+5. **Encrypt global-metadata.dat** scrambles the IL2CPP metadata file on disk and decrypts it at runtime.
 
 This is a starting point you own and can extend, not a turnkey product. Please read the threat model and the honest limitations near the bottom before you rely on it.
 
@@ -83,7 +84,22 @@ A few things are handled for you:
 
 **How it runs.** Both this and String Obfuscation run inside the `Unity.CodeProtection.CodeGen` ILPostProcessor. It only touches player builds (it is skipped in the editor and in play mode), it only touches `Assembly-CSharp` and `Assembly-CSharp-firstpass`, and on any error it leaves your assembly untouched rather than shipping broken code.
 
-### 3. Code Integrity Check
+### 3. AI Confusion
+
+**What it does.** Attackers increasingly paste decompiled code into an AI and ask it to explain, summarize, or find the licensing and anti cheat logic. AI is good at that because it reads names and structure and infers intent. This pass feeds it convincing noise. At compile time it generates realistically named decoy classes and methods, for example `Game.Systems.LicenseValidationService.VerifyToken` or `Core.Runtime.SaveStateController.RecomputeChecksum`, with bodies that look like plausible logic. None of it ever runs (every decoy is reachable only from an always false branch), and none of your real code is renamed or changed. The effect is that an AI summarizing the dump latches onto the fake systems and reports confident wrong conclusions, and a human skimming the AI's answer is sent down dead ends.
+
+**Step by step.**
+
+1. Open **Tools > Code Protection** and turn **AI Confusion** on.
+2. Set **Decoy classes** and **Decoy methods / class** to taste. A handful of classes is plenty; more is more noise but a larger build.
+3. Choose what the decoys attach to, the same selection as the other passes: tag classes with `[Protect]`, or turn on **Force adding random code**.
+4. Press **Save**, then build.
+
+**Anchoring note (important for IL2CPP).** The decoys are kept in the build by being referenced from an always false branch inside your processed classes. So for an **IL2CPP** build, turn on **Force** or tag at least one class with `[Protect]`, otherwise IL2CPP managed stripping removes the unreferenced decoys. On **Mono** they always appear, because Mono does not strip.
+
+**What it does not do.** It does not rename your real classes or methods (too risky in Unity, because of reflection, serialized fields, and engine messages like `Update`), and it does not flatten control flow. Those hurt AI too but are the error prone techniques; if you want control flow flattening as an experimental option, it can be added separately.
+
+### 4. Code Integrity Check
 
 **What it does.** Two halves, tied together by one secret passphrase.
 
@@ -106,7 +122,7 @@ A few things are handled for you:
 
 **Scope.** Standalone only, because `StreamingAssets` is a plain file path there. On Android the manifest lives inside the APK and needs `UnityWebRequest` to read, plus archive repacking to write, which is not handled here. The verifier is safe to leave in the project even when the feature is off: with no manifest present it does nothing.
 
-### 4. Encrypt global-metadata.dat (advanced, needs manual native work)
+### 5. Encrypt global-metadata.dat (advanced, needs manual native work)
 
 > **Read this before turning it on.** This is the only feature with a manual, version specific step. If you enable the toggle but skip the native patch, your IL2CPP build will crash on startup, because the file gets scrambled but nothing decrypts it. If your game crashed right after a build, this toggle being on is the usual cause: turn it off, rebuild, and it will boot again.
 
@@ -140,8 +156,8 @@ Both are generated strong on first use. The integrity secret is stored masked, s
 
 ## Recommended setup by backend
 
-* **Mono standalone:** use **String Obfuscation**, **Add Random Code**, and **Code Integrity Check**. The metadata feature does not apply (it is IL2CPP only), so leave it off.
-* **IL2CPP standalone:** **String Obfuscation**, **Add Random Code**, and **Code Integrity Check** all work out of the box. **Encrypt global-metadata.dat** additionally needs the native patch. Start with the first three, then add metadata encryption when you are ready for the native step.
+* **Mono standalone:** use **String Obfuscation**, **Add Random Code**, **AI Confusion**, and **Code Integrity Check**. The metadata feature does not apply (it is IL2CPP only), so leave it off.
+* **IL2CPP standalone:** **String Obfuscation**, **Add Random Code**, **AI Confusion**, and **Code Integrity Check** all work out of the box. For **AI Confusion** and **Add Random Code**, turn on **Force** or tag a class with `[Protect]` so the injected code is anchored and survives stripping. **Encrypt global-metadata.dat** additionally needs the native patch.
 
 ## Security review summary
 
@@ -161,6 +177,8 @@ Everything here runs on the player's machine, so treat it as raising effort, not
 * **String Obfuscation.** Stops a casual decompile from showing your strings. It does not survive someone who runs or traces the code, because the decoder and the per string key both ship with the game. Public source lowers the effort to write an automated un protector, though generic tools already deobfuscate closed source string encryptors by invoking the decoder dynamically. The randomized decoder name and per project salt mean a single static pattern does not match every game, which raises the cost of a one size fits all tool.
 
 * **Add Random Code.** Stops nothing on its own; it slows a human reading the code. Automated dead code and unused method cleaners remove most of it. Randomized prefixes stop a trivial name based cleaner, but a control flow aware tool still prunes the always false branches.
+
+* **AI Confusion.** Degrades AI assisted analysis, which leans on names and structure to guess intent, by filling the code with believable fakes. It is strongest against someone who trusts an AI summary without verifying, which is common. It does not stop a careful human or a tool that prunes unreferenced, never taken branches, and once an attacker knows a project uses decoys they can discount them. It raises the cost and the confusion, it does not make the real logic unreadable. Treat it as one more layer, not a wall.
 
 * **Code Integrity Check.** Stops casual file edits and simple mods, which is the common cheat vector. It does not survive an attacker who extracts the baked secret, edits a file, recomputes the hash, and re signs the manifest. Public source makes writing that script easy; the real limit is architectural, because the secret must live in the build. Randomizing the manifest filename and masking the secret remove the easy tells.
 
@@ -193,6 +211,7 @@ Everything here runs on the player's machine, so treat it as raising effort, not
 ```
 CodeProtection/
   CodeProtection.asmdef             runtime assembly definition
+  LICENSE
   CodeGen/
     XorKeystream.cs                 keystream (mirror of the C++ side)
     ProtectionAttributes.cs         [Protect] / [DoNotProtect]

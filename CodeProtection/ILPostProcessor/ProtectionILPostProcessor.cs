@@ -9,7 +9,7 @@ using Unity.CompilationPipeline.Common.ILPostProcessing;
 
 namespace CodeProtection.CodeGen
 {
-    
+    /// 
     /// Compile time obfuscator. Unlike a post build DLL rewrite, this runs during
     /// compilation, before IL2CPP converts the IL to C++, so Add Random Code and
     /// String Obfuscation take effect on BOTH Mono and IL2CPP builds out of the box.
@@ -27,7 +27,7 @@ namespace CodeProtection.CodeGen
     /// Kill switch: if this assembly ever fails to compile on your Unity version,
     /// delete the CodeProtection/ILPostProcessor folder. The rest of the asset
     /// keeps working; you only lose the IL2CPP route for these two passes.
-    
+    /// 
     public sealed class ProtectionILPostProcessor : ILPostProcessor
     {
         public override ILPostProcessor GetInstance() => this;
@@ -41,7 +41,7 @@ namespace CodeProtection.CodeGen
             if (defines != null && defines.Contains("UNITY_EDITOR")) return false; // editor / play mode
 
             var cfg = ProtectionConfig.Load();
-            return cfg != null && (cfg.AddRandomCode || cfg.ObfuscateStrings);
+            return cfg != null && (cfg.AddRandomCode || cfg.ObfuscateStrings || cfg.AiConfusion);
         }
 
         public override ILPostProcessResult Process(ICompiledAssembly compiledAssembly)
@@ -108,6 +108,9 @@ namespace CodeProtection.CodeGen
         public string FieldPrefix = "cp_";
         public string MethodPrefix = "cp_";
         public int Salt = 0;
+        public bool AiConfusion;
+        public int DecoyClasses = 2;
+        public int DecoyMethodsPerClass = 6;
 
         public static ProtectionConfig Load()
         {
@@ -139,6 +142,9 @@ namespace CodeProtection.CodeGen
                         case "fieldPrefix": if (IsIdent(v)) cfg.FieldPrefix = v; break;
                         case "methodPrefix": if (IsIdent(v)) cfg.MethodPrefix = v; break;
                         case "salt": cfg.Salt = ParseInt(v, 0); break;
+                        case "aiConfusion": cfg.AiConfusion = v == "1"; break;
+                        case "decoyClasses": cfg.DecoyClasses = ParseInt(v, 2); break;
+                        case "decoyMethodsPerClass": cfg.DecoyMethodsPerClass = ParseInt(v, 6); break;
                     }
                 }
                 return cfg;
@@ -199,6 +205,14 @@ namespace CodeProtection.CodeGen
             if (cfg.ObfuscateStrings)
                 reveal = EnsureRevealMethod(module, cfg); // throws on failure -> caught upstream
 
+            List<MethodDefinition> decoys = null;
+            if (cfg.AiConfusion)
+            {
+                try { decoys = BuildDecoys(module, cfg, rng); }
+                catch { decoys = null; }
+                if (decoys != null && decoys.Count > 0) changed = true;
+            }
+
             foreach (var type in types)
             {
                 if (!ShouldProcess(type, cfg)) continue;
@@ -209,12 +223,194 @@ namespace CodeProtection.CodeGen
                     {
                         if (ObfuscateStringsInType(type, reveal, rng, cfg)) changed = true;
                     }
+                    if (cfg.AiConfusion && decoys != null && decoys.Count > 0)
+                    {
+                        if (AnchorDecoys(module, type, decoys, rng)) changed = true;
+                    }
                 }
                 catch { /* skip an awkward type, keep the rest */ }
             }
 
             return changed;
         }
+
+        // ---- AI Confusion (misleading decoys) ----
+        //
+        // Generates realistically named classes and methods whose bodies are
+        // plausible but inert. They are never executed (only referenced from an
+        // always false dead branch), so behaviour is unchanged, but an AI reading
+        // the decompiled code sees convincing false leads (fake license, save, and
+        // network systems) and draws confident wrong conclusions. The dead branch
+        // reference also keeps them from being stripped out of IL2CPP builds.
+
+        static readonly string[] DecoyNouns =
+        {
+            "Session", "Inventory", "Network", "Save", "License", "Audio", "Render",
+            "Physics", "Player", "Account", "Transform", "Vertex", "Payload", "Cache",
+            "Profile", "Checksum", "Manifest", "Binding", "Resource", "Telemetry",
+            "Shader", "Terrain", "Dialogue", "Quest", "Combat", "Economy", "Security",
+        };
+
+        static readonly string[] DecoySuffixes =
+        {
+            "Controller", "Manager", "Service", "Handler", "Provider", "System",
+            "Processor", "Validator", "Cache", "Registry", "Dispatcher", "Builder",
+        };
+
+        static readonly string[] DecoyVerbs =
+        {
+            "Validate", "Recompute", "Synchronize", "Resolve", "Apply", "Initialize",
+            "Serialize", "Fetch", "Refresh", "Register", "Dispatch", "Evaluate",
+            "Rebuild", "Commit", "Update", "Calculate", "Verify", "Flush", "Decode",
+        };
+
+        static readonly string[] DecoyFieldNouns =
+        {
+            "state", "token", "buffer", "handle", "offset", "count", "index",
+            "cache", "seed", "hash", "flag", "cursor", "length", "version",
+        };
+
+        static List<MethodDefinition> BuildDecoys(ModuleDefinition module, ProtectionConfig cfg, System.Random rng)
+        {
+            int classCount = Clamp(cfg.DecoyClasses, 0, 16);
+            int perClass = Clamp(cfg.DecoyMethodsPerClass, 1, 32);
+            var all = new List<MethodDefinition>();
+            if (classCount == 0) return all;
+
+            var usedTypeNames = new HashSet<string>();
+
+            for (int c = 0; c < classCount; c++)
+            {
+                string ns = DecoyNamespace(rng);
+                string typeName = UniqueName(usedTypeNames,
+                    DecoyNouns[rng.Next(DecoyNouns.Length)] + DecoySuffixes[rng.Next(DecoySuffixes.Length)], rng);
+
+                var t = new TypeDefinition(ns, typeName,
+                    TypeAttributes.NotPublic | TypeAttributes.Sealed | TypeAttributes.Abstract | TypeAttributes.Class,
+                    module.TypeSystem.Object);
+                module.Types.Add(t);
+
+                var usedMethodNames = new HashSet<string>();
+                var classMethods = new List<MethodDefinition>();
+                for (int i = 0; i < perClass; i++)
+                {
+                    string mn = UniqueName(usedMethodNames,
+                        DecoyVerbs[rng.Next(DecoyVerbs.Length)] + DecoyNouns[rng.Next(DecoyNouns.Length)], rng);
+                    var m = new MethodDefinition(mn,
+                        MethodAttributes.Public | MethodAttributes.Static | MethodAttributes.HideBySig,
+                        module.TypeSystem.Int32);
+                    m.Parameters.Add(new ParameterDefinition("value", ParameterAttributes.None, module.TypeSystem.Int32));
+                    t.Methods.Add(m);
+                    classMethods.Add(m);
+                    all.Add(m);
+                }
+            }
+
+            // Fill bodies now that every decoy exists, so they can call each other.
+            foreach (var m in all)
+                FillDecoyBody(m, all, rng);
+
+            return all;
+        }
+
+        static void FillDecoyBody(MethodDefinition m, List<MethodDefinition> pool, System.Random rng)
+        {
+            // Keeps exactly one int on the stack throughout, then returns it. Every
+            // step is either arithmetic (push a constant, binary op) or a call to a
+            // sibling decoy (int in, int out), so the stack stays balanced and the
+            // IL verifies.
+            var il = m.Body.GetILProcessor();
+            il.Emit(OpCodes.Ldarg_0);
+            int steps = rng.Next(4, 10);
+            for (int i = 0; i < steps; i++)
+            {
+                if (pool.Count > 1 && rng.Next(3) == 0)
+                {
+                    MethodDefinition d;
+                    do { d = pool[rng.Next(pool.Count)]; } while (d == m && pool.Count > 1);
+                    il.Emit(OpCodes.Call, d); // consumes the int on the stack, pushes its result
+                }
+                else
+                {
+                    il.Emit(OpCodes.Ldc_I4, rng.Next(1, 4096));
+                    switch (rng.Next(4))
+                    {
+                        case 0: il.Emit(OpCodes.Add); break;
+                        case 1: il.Emit(OpCodes.Mul); break;
+                        case 2: il.Emit(OpCodes.Xor); break;
+                        default: il.Emit(OpCodes.Or); break;
+                    }
+                }
+            }
+            il.Emit(OpCodes.Ret);
+        }
+
+        static bool AnchorDecoys(ModuleDefinition module, TypeDefinition type,
+                                 List<MethodDefinition> decoys, System.Random rng)
+        {
+            // An always false guard, then a dead branch call to a decoy at the top
+            // of each real method. The call is never reached, but it references the
+            // decoy so IL2CPP stripping keeps it in the build.
+            var flag = new FieldDefinition(
+                "_" + DecoyFieldNouns[rng.Next(DecoyFieldNouns.Length)] + Hex(rng, 4),
+                FieldAttributes.Static | FieldAttributes.Private | FieldAttributes.InitOnly,
+                module.TypeSystem.Boolean);
+            type.Fields.Add(flag);
+
+            bool any = false;
+            foreach (var method in new List<MethodDefinition>(type.Methods))
+            {
+                if (!method.HasBody) continue;
+                if (method.Body.Instructions.Count == 0) continue;
+                if (HasAttr(method, "DoNotProtectAttribute")) continue;
+                if (method.IsConstructor && method.IsStatic) continue;
+
+                try
+                {
+                    var il = method.Body.GetILProcessor();
+                    var first = method.Body.Instructions[0];
+                    var decoy = decoys[rng.Next(decoys.Count)];
+
+                    il.InsertBefore(first, il.Create(OpCodes.Ldsfld, flag));
+                    il.InsertBefore(first, il.Create(OpCodes.Brfalse, first));
+                    il.InsertBefore(first, il.Create(OpCodes.Ldc_I4, rng.Next(1, 4096)));
+                    il.InsertBefore(first, il.Create(OpCodes.Call, decoy));
+                    il.InsertBefore(first, il.Create(OpCodes.Pop));
+                    any = true;
+                }
+                catch { }
+            }
+            return any;
+        }
+
+        static string DecoyNamespace(System.Random rng)
+        {
+            // The trailing random segment keeps a decoy class from ever colliding
+            // with a real type of the same name in the project (which would be a
+            // duplicate type and a build error). The class and method names stay
+            // clean, so the code still reads as real to an AI.
+            string[] roots = { "Game", "Core", "Runtime", "App", "Engine", "Framework" };
+            string[] leaves = { "Systems", "Runtime", "Internal", "Services", "Gameplay", "Net" };
+            return roots[rng.Next(roots.Length)] + "." + leaves[rng.Next(leaves.Length)] + ".Gen" + Hex(rng, 5);
+        }
+
+        static string UniqueName(HashSet<string> used, string candidate, System.Random rng)
+        {
+            string name = candidate;
+            while (!used.Add(name))
+                name = candidate + Hex(rng, 3);
+            return name;
+        }
+
+        static string Hex(System.Random rng, int len)
+        {
+            const string h = "0123456789abcdef";
+            var buf = new char[len];
+            for (int i = 0; i < len; i++) buf[i] = h[rng.Next(h.Length)];
+            return new string(buf);
+        }
+
+        static int Clamp(int v, int lo, int hi) => v < lo ? lo : (v > hi ? hi : v);
 
         static bool ShouldProcess(TypeDefinition type, ProtectionConfig cfg)
         {
@@ -346,7 +542,7 @@ namespace CodeProtection.CodeGen
             return new string(a);
         }
 
-        
+        /// 
         /// Emits the decoder into the module and returns it. Equivalent to:
         ///   static string R(string s, int k) {
         ///       char[] a = s.ToCharArray();
@@ -355,7 +551,7 @@ namespace CodeProtection.CodeGen
         ///       return new string(a);
         ///   }
         /// The type name, method name, and SALT all vary per project.
-        
+        /// 
         static MethodDefinition EnsureRevealMethod(ModuleDefinition module, ProtectionConfig cfg)
         {
             var strTypeDef = module.TypeSystem.String.Resolve();
