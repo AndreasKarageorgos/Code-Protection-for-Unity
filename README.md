@@ -231,3 +231,5 @@ CodeProtection/
   Native/
     metadata_decrypt_patch.cpp      libil2cpp decrypt patch + keystream
 ```
+
+![Architecture Diagram](diagram.png)
